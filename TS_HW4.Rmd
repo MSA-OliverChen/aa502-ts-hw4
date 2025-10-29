@@ -28,7 +28,7 @@ Read in data.
 
 ```{r}
 data_path = "https://raw.githubusercontent.com/sjsimmo2/TimeSeries/refs/heads/master/energy_F2025.csv"
-energy <- readr::read_csv(data_path)
+energy <- readr::read_csv(data_path, show_col_types=FALSE)
 ```
 
 Roll up data.
@@ -40,10 +40,6 @@ energy_daily <- energy %>%
   group_by(date) %>%
   summarise(daily_total = sum(mw))
 
-energy_rolled <- energy_daily %>%
-  mutate(year_month = format(date, "%Y-%m")) %>%
-  group_by(year_month) %>%
-  summarise(total_daily_avg = mean(daily_total))
 ```
 
 
@@ -51,16 +47,25 @@ Train test split.
 
 ```{r}
 #Train: data from August 2018 - August 2023
-train <- energy_rolled %>%
-  filter(year_month >= "2018-08" & year_month <= "2023-08")
+train <- energy_daily %>%
+  filter(date >= as.Date("2018-08-01") & date < as.Date("2023-08-01"))
+
+train.ts = train %>%
+  as_tsibble(index = date)
 
 #Validation: data from September 2023 - August 2024
-validation <- energy_rolled %>%
-  filter(year_month >= "2023-09" & year_month <= "2024-08")
+validation <- energy_daily %>%
+  filter(date >= as.Date("2023-09-01") & date < as.Date("2024-08-01"))
+
+validation.ts = validation %>%
+  as_tsibble(index = date)
 
 #Test: data from September 2024 - August 2025
-test <- energy_rolled %>%
-  filter(year_month >= "2024-09" & year_month <= "2025-08")
+test <- energy_daily %>%
+  filter(date >= as.Date("2024-09-01") & date < as.Date("2025-08-01"))
+
+test.ts = test %>%
+  as_tsibble(index = date)
 ```
 
 # Analysis
