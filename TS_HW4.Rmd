@@ -55,14 +55,14 @@ train.ts = train %>%
 
 #Validation: data from September 2023 - August 2024
 validation <- energy_daily %>%
-  filter(date >= as.Date("2023-09-01") & date < as.Date("2024-08-01"))
+  filter(date >= as.Date("2023-08-01") & date < as.Date("2024-08-01"))
 
 validation.ts = validation %>%
   as_tsibble(index = date)
 
 #Test: data from September 2024 - August 2025
 test <- energy_daily %>%
-  filter(date >= as.Date("2024-09-01") & date < as.Date("2025-08-01"))
+  filter(date >= as.Date("2024-08-01") & date < as.Date("2025-08-01"))
 
 test.ts = test %>%
   as_tsibble(index = date)
@@ -72,9 +72,61 @@ test.ts = test %>%
 
 ## Exponential Smoothing Model (ESM)
 
-### Building Model
+### Performing STL decomposition on training data to assess trend/seasonality
 ```{r}
+dcmp = train.ts %>% model (stl = STL (daily_total))
+components(dcmp) %>% autoplot() + theme_classic()
+```
 
+```{r}
+train.ts %>% 
+  features(daily_total, feat_stl, .period = "year")
+
+train.ts %>% 
+  features(daily_total, feat_stl, .period = 7)
+
+#Yearly seasonal strength is much stronger than weekly, so we will just stick with year
+
+```
+
+
+### Fitting models
+```{r}
+esm_fit <- train.ts |>
+  model(
+    #Some with just weekly seasonality
+    'HWAddWeek' = ETS(daily_total ~ error("A") + trend("A") + season("A", period="week")),
+    'HWMultWeek' = ETS(daily_total ~ error("M") + trend("A") + season("M", period="week")),
+    'NoTrendWeek' = ETS(daily_total ~ error("A") + trend("N") + season("A", period="week")),
+    #Some with both week/year (specifying period="year" gave error)
+    'HWAddYear' = ETS(daily_total ~ error("A") + trend("A") + season("A")),
+    'HWMultYear' = ETS(daily_total ~ error("M") + trend("A") + season("M")),
+    'NoTrendYear' = ETS(daily_total ~ error("A") + trend("N") + season("A")),
+  )
+```
+
+```{r}
+esm_fc <- esm_fit %>%
+  fabletools::forecast(h = nrow(validation))
+fabletools::accuracy(esm_fc, validation.ts)
+```
+
+```{r}
+#Search for best one
+esm_auto <- train.ts %>%
+  model(ETS(daily_total))
+
+report(esm_auto) #MNA
+
+auto_fc <- esm_auto %>%
+  fabletools::forecast(h = nrow(validation)-1)
+fabletools::accuracy(auto_fc, validation.ts)
+
+#Worse than the ones we did manually
+
+```
+```{r}
+#Idea: roll it up by month so we can see yearly trend, then interpolate to get days in between
 ```
 
 
