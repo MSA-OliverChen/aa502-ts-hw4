@@ -28,7 +28,7 @@ Read in data.
 
 ```{r}
 data_path = "https://raw.githubusercontent.com/sjsimmo2/TimeSeries/refs/heads/master/energy_F2025.csv"
-energy <- readr::read.csv(data_path)
+energy <- readr::read_csv(data_path)
 ```
 
 Roll up data.
