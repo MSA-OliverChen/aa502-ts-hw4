@@ -1,0 +1,109 @@
+---
+title: "Time Series Homework 4"
+author: "Team 6 - Oliver Chen, Hannah Enck, Jamil Gracia, Ava Klissouras"
+date: "2025-10-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+Load libraries
+```{r}
+library(tsibble)
+library(tidyverse)
+library(ggplot2)
+library(forecast)
+library(fable)
+library(lubridate)
+library(fpp3)
+library(tseries)
+library(fabletools)
+```
+
+
+Read in data
+```{r}
+energy <- read.csv("https://raw.githubusercontent.com/sjsimmo2/TimeSeries/refs/heads/master/energy_F2025.csv")
+```
+
+
+Roll up data
+```{r}
+energy_daily <- energy %>%
+  mutate(new_datetime = mdy_hm(datetime_beginning_ept),
+         date = as_date(new_datetime)) %>%
+  group_by(date) %>%
+  summarise(daily_total = sum(mw))
+
+energy_rolled <- energy_daily %>%
+  mutate(year_month = format(date, "%Y-%m")) %>%
+  group_by(year_month) %>%
+  summarise(total_daily_avg = mean(daily_total))
+```
+
+
+Train test split
+```{r}
+#Train: data from August 2018 - August 2023
+train <- energy_rolled %>%
+  filter(year_month >= "2018-08" & year_month <= "2023-08")
+
+#Validation: data from September 2023 - August 2024
+validation <- energy_rolled %>%
+  filter(year_month >= "2023-09" & year_month <= "2024-08")
+
+#Test: data from September 2024 - August 2025
+test <- energy_rolled %>%
+  filter(year_month >= "2024-09" & year_month <= "2025-08")
+```
+
+
+Exponential Smoothing Model (ESM)
+```{r}
+
+```
+
+
+ESM forecast on validation data
+```{r}
+
+```
+
+
+MAE and MAPE of ESM on validation data
+```{r}
+
+```
+
+
+Graph of actual validation data vs ESM forecasted data 
+```{r}
+
+```
+
+
+Seasonal ARIMA model
+```{r}
+
+```
+
+
+Seasonal ARIMA model forecast on validation data
+```{r}
+
+```
+
+
+MAE and MAPE of seasonal ARIMA model on validation data
+```{r}
+
+```
+
+
+Graph of actual validation data vs seasonal ARIMA forecasted data 
+```{r}
+
+```
