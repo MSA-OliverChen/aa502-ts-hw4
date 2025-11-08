@@ -39,7 +39,6 @@ energy_daily <- energy %>%
          date = as_date(new_datetime)) %>%
   group_by(date) %>%
   summarise(daily_total = sum(mw))
-
 ```
 
 
@@ -66,6 +65,17 @@ test <- energy_daily %>%
 
 test.ts = test %>%
   as_tsibble(index = date)
+```
+
+
+Check for missing values.
+
+```{r}
+has_gaps(train.ts)
+has_gaps(validation.ts)
+has_gaps(test.ts)
+
+#All return FALSE- good. No implicit missingness
 ```
 
 # Analysis
