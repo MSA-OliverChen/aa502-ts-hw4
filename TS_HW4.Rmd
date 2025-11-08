@@ -94,14 +94,10 @@ train.ts %>%
 ```{r}
 esm_fit <- train.ts |>
   model(
-    #Some with just weekly seasonality
+    #Just weekly seasonality since ESM does not support periods longer than 24 (i.e. year would be 365 since we have daily data)
     'HWAddWeek' = ETS(daily_total ~ error("A") + trend("A") + season("A", period="week")),
     'HWMultWeek' = ETS(daily_total ~ error("M") + trend("A") + season("M", period="week")),
-    'NoTrendWeek' = ETS(daily_total ~ error("A") + trend("N") + season("A", period="week")),
-    #Some with both week/year (specifying period="year" gave error)
-    'HWAddYear' = ETS(daily_total ~ error("A") + trend("A") + season("A")),
-    'HWMultYear' = ETS(daily_total ~ error("M") + trend("A") + season("M")),
-    'NoTrendYear' = ETS(daily_total ~ error("A") + trend("N") + season("A")),
+    'NoTrendWeek' = ETS(daily_total ~ error("A") + trend("N") + season("A", period="week"))
   )
 ```
 
@@ -125,27 +121,24 @@ fabletools::accuracy(auto_fc, validation.ts)
 #Worse than the ones we did manually
 
 ```
-```{r}
-#Idea: roll it up by month so we can see yearly trend, then interpolate to get days in between
-```
 
-
-### Forecast on Validation
-```{r}
-
-```
-
-
-### Model Accuracy
-```{r}
-
-```
-
-
-### Actual vs. Forecasted
+### Actual vs. Forecasted Plot
 
 ```{r}
+#Best model of all the ones above was Holt-Winters additive
 
+#Get forecast
+HW_add <- train.ts |>
+  model(
+    ETS(daily_total ~ error("A") + trend("A") + season("A", period="week"))
+  )
+ESM_fc <- HW_add %>%
+  fabletools::forecast(h = nrow(validation)-1)
+
+ggplot() + geom_line(data = ESM_fc, aes(x=date, y=.mean, color = "Forecast")) + 
+  geom_line(data = validation.ts, aes(x=date, y=daily_total, color = "Actual"))+
+  labs(x="Month", y="Megawatts", title="Total Daily Energy Consumption", color = "Series") + 
+  scale_color_manual (values=c("Actual"="black","Forecast" = "hotpink" ))
 ```
 
 ## ARIMA
