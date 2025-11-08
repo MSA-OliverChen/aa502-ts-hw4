@@ -138,9 +138,8 @@ ESM_fc <- HW_add %>%
 ggplot() + geom_line(data = ESM_fc, aes(x=date, y=.mean, color = "Forecast")) + 
   geom_line(data = validation.ts, aes(x=date, y=daily_total, color = "Actual"))+
   labs(x="Month", y="Megawatts", title="Total Daily Energy Consumption", color = "Series") + 
-  scale_color_manual (values=c("Actual"="black","Forecast" = "hotpink" ))
+  scale_color_manual (values=c("Actual"="black","Forecast" = "orange" ))
 ```
-
 ## ARIMA
 
 ### Seasonal ARIMA
