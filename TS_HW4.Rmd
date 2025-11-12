@@ -150,31 +150,120 @@ ggplot() + geom_line(data = ESM_fc, aes(x=date, y=.mean, color = "Forecast")) +
   labs(x="Month", y="Megawatts", title="Total Daily Energy Consumption", color = "Series") + 
   scale_color_manual (values=c("Actual"="black","Forecast" = "orange" ))
 ```
-## ARIMA
 
-### Seasonal ARIMA
+## Seasonal ARIMA
+
+Recall that yearly seasonality was the strongest.
 
 ```{r}
+train.ts %>%
+  features(daily_total, feat_stl, .period = 'week')
 
+train.ts %>%
+  features(daily_total, feat_stl, .period = 'year')
 ```
 
+### Approaches
+
+#### Stochastic
+
+#### Deterministic
+
+##### Dummy Variables
+
+```{r}
+# weekday only realistic one to do
+sd_arima <- train.ts %>%
+  mutate(day_of_week = wday(date)) %>%
+  model(ARIMA(daily_total ~ factor(day_of_week) + PDQ(D = 0)))
+report(sd_arima)
+```
+
+#### Fourier
+
+Let's try Fourier terms up to $k=10$. Note here that we use $P=Q=D=d=0$ because we want to try to capture non-stationarity through the seasonal components only.
+
+```{r}
+fourier_year_arima <- train.ts %>%
+  model(
+    `K = 1` = ARIMA(daily_total ~ fourier(K=1, period = 'year') + PDQ(0, 0, 0) + pdq(d = 0)),
+    `K = 2` = ARIMA(daily_total ~ fourier(K=2, period = 'year') + PDQ(0, 0, 0) + pdq(d = 0)),
+    `K = 3` = ARIMA(daily_total ~ fourier(K=3, period = 'year') + PDQ(0, 0, 0) + pdq(d = 0)),
+    `K = 4` = ARIMA(daily_total ~ fourier(K=4, period = 'year') + PDQ(0, 0, 0) + pdq(d = 0)),
+    `K = 5` = ARIMA(daily_total ~ fourier(K=5, period = 'year') + PDQ(0, 0, 0) + pdq(d = 0)),
+    `K = 6` = ARIMA(daily_total ~ fourier(K=6, period = 'year') + PDQ(0, 0, 0) + pdq(d = 0)),
+    `K = 7` = ARIMA(daily_total ~ fourier(K=7, period = 'year') + PDQ(0, 0, 0) + pdq(d = 0)),
+    `K = 8` = ARIMA(daily_total ~ fourier(K=8, period = 'year') + PDQ(0, 0, 0) + pdq(d = 0)),
+    `K = 9` = ARIMA(daily_total ~ fourier(K=9, period = 'year') + PDQ(0, 0, 0) + pdq(d = 0)),
+    `K = 10` = ARIMA(daily_total ~ fourier(K=10, period = 'year') + PDQ(0, 0, 0) + pdq(d = 0))
+  )
+glance(fourier_year_arima)
+```
+
+Seems like the best harmonic frequency for yearly seasonality is $K=7$ based on AICc. Now, let's try to capture the weekly seasonality.
+
+<!-- Should I instead be doing a grid search? -->
+
+```{r}
+fourier_week_arima <- train.ts %>%
+  model(
+    `K = 1` = ARIMA(daily_total ~ fourier(K=1, period = 'week') + 
+                                  fourier(K=7, period = 'year') + 
+                                  PDQ(0, 0, 0) + pdq(d = 0)),
+    `K = 2` = ARIMA(daily_total ~ fourier(K=2, period = 'week') + 
+                                  fourier(K=7, period = 'year') + 
+                                  PDQ(0, 0, 0) + pdq(d = 0)),
+    `K = 3` = ARIMA(daily_total ~ fourier(K=3, period = 'week') + 
+                                  fourier(K=7, period = 'year') + 
+                                  PDQ(0, 0, 0) + pdq(d = 0)),
+  )
+glance(fourier_week_arima)
+```
+
+```{r}
+fourier_final_arima = fourier_week_arima %>%
+  select(`K = 3`)
+
+report(fourier_final_arima)
+```
+
+Let's confirm that we have white noise.
+
+```{r}
+# test up to 2 * S, as recommended by Hyndman
+lag = 2 * 365.25
+# p + q = 1 + 4 = 5
+dof = 5
+augment(fourier_final_arima) %>%
+  features(.innov, ljung_box, lag=lag, dof=dof)
+
+fourier_final_arima %>%
+  ggtime::gg_tsresiduals(lag=lag)
+```
 
 ### Forecast on Validation
 
 ```{r}
+arima_fc <- fourier_final_arima %>%
+  fabletools::forecast(h = nrow(validation)-1)
 
+ggplot() + geom_line(data = arima_fc , aes(x=date, y=.mean, color = "Forecast")) + 
+  geom_line(data = validation.ts, aes(x=date, y=daily_total, color = "Actual"))+
+  labs(x="Month", y="Megawatts", title="Total Daily Energy Consumption", color = "Series") + 
+  scale_color_manual (values=c("Actual"="black","Forecast" = "orange" ))
 ```
 
 
 ### Model Accuracy
 
 ```{r}
+# get SD for MAE report
+energy_daily %>% pull(daily_total) %>% sd()
 
+fabletools::accuracy(arima_fc, validation.ts) %>%
+  select(c(MAE, MAPE))
 ```
 
-
-### Actual vs. Forecasted
-
-```{r}
-
-```
+Accuracy measures of the model are as follows:
+* MAE: 7541.57 (SD = 15300.61)
+* MAPE: 7.23%
