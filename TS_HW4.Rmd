@@ -172,18 +172,31 @@ train.ts %>%
 ##### Dummy Variables
 
 ```{r}
-# weekday only realistic one to do
+# weekly seasonality only realistic one to do
 sd_arima <- train.ts %>%
   mutate(day_of_week = wday(date)) %>%
-  model(ARIMA(daily_total ~ factor(day_of_week) + PDQ(D = 0)))
+  model(ARIMA(daily_total ~ factor(day_of_week) + PDQ(D = 0) + pdq(d = 0)))
 report(sd_arima)
 ```
+
+```{r}
+sd_arima <- train.ts %>%
+  mutate(day_of_year = yday(date)) %>%
+  model(ARIMA(daily_total ~ factor(day_of_year) + PDQ(D = 0) + pdq(d = 0)))
+report(sd_arima)
+```
+
 
 #### Fourier
 
 Let's try Fourier terms up to $k=10$. Note here that we use $P=Q=D=d=0$ because we want to try to capture non-stationarity through the seasonal components only.
 
 ```{r}
+# theoretically, we could test k in [1, 365 // 2] but this would likely cause
+# diminishing returns after a few K.
+
+# we can see through this search up through K=10 that we already
+# reached a local minimum of AICc
 fourier_year_arima <- train.ts %>%
   model(
     `K = 1` = ARIMA(daily_total ~ fourier(K=1, period = 'year') + PDQ(0, 0, 0) + pdq(d = 0)),
@@ -202,9 +215,8 @@ glance(fourier_year_arima)
 
 Seems like the best harmonic frequency for yearly seasonality is $K=7$ based on AICc. Now, let's try to capture the weekly seasonality.
 
-<!-- Should I instead be doing a grid search? -->
-
 ```{r}
+# test up to period // 2 = 3
 fourier_week_arima <- train.ts %>%
   model(
     `K = 1` = ARIMA(daily_total ~ fourier(K=1, period = 'week') + 
@@ -220,9 +232,55 @@ fourier_week_arima <- train.ts %>%
 glance(fourier_week_arima)
 ```
 
+Seems like the best harmonic frequency for weekly seasonality is $K=3$.
+
+Let's also try to do a grid search.
+
 ```{r}
-fourier_final_arima = fourier_week_arima %>%
-  select(`K = 3`)
+grid_fourier = function(train,
+                               K_year_max = 10, 
+                               K_week_max = 3) {
+  for (K_year in c(1:K_year_max)) {
+    for (K_week in c(1:K_week_max)) {
+      iter_name = paste0("K_year=", K_year, ", K_week=", K_week, sep='')
+      print(iter_name)
+      model_iter_glance = train %>%
+        model(
+          # jank way to set the name based on current iteration
+          !!iter_name :=
+            ARIMA(daily_total ~ fourier(K=K_week, period = 'week') + 
+                                fourier(K=K_year, period = 'year') + 
+                                PDQ(0, 0, 0) + pdq(d = 0))
+        ) %>%
+        glance()
+      # use first one to initialize master
+      if (K_year == 1 & K_week == 1) {
+        fourier_master = model_iter_glance
+      } else {
+        fourier_master = bind_rows(fourier_master, model_iter_glance)
+      }
+    }
+  }
+  return (fourier_master)
+}
+
+grid_fourier_results = grid_fourier(train.ts)
+grid_fourier_results %>%
+  arrange(AICc)
+```
+
+This one found a very similar model, with the non-grid search being a narrow second in AICc. Let's use the final model from the grid search.
+
+```{r}
+K_year = 6
+K_week = 3
+
+fourier_final_arima = train.ts %>%
+  model(
+    ARIMA(daily_total ~ fourier(K=K_week, period = 'week') + 
+                                          fourier(K=K_year, period = 'year') + 
+                                          PDQ(0, 0, 0) + pdq(d = 0))
+  )
 
 report(fourier_final_arima)
 ```
@@ -265,5 +323,5 @@ fabletools::accuracy(arima_fc, validation.ts) %>%
 ```
 
 Accuracy measures of the model are as follows:
-* MAE: 7541.57 (SD = 15300.61)
-* MAPE: 7.23%
+* MAE: 7666.79 (SD = 15300.61)
+* MAPE: 7.35%
