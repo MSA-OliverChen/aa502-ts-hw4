@@ -21,6 +21,9 @@ library(forecast)
 library(fable)
 library(fpp3)
 library(tseries)
+library(progressr)
+
+progressr::handlers(handler_cli)
 ```
 
 
@@ -83,6 +86,7 @@ has_gaps(test.ts)
 ## Exponential Smoothing Model (ESM)
 
 ### Performing STL decomposition on training data to assess trend/seasonality
+
 ```{r}
 dcmp = train.ts %>% model (stl = STL (daily_total))
 components(dcmp) %>% autoplot() + theme_classic()
@@ -107,7 +111,7 @@ esm_fit <- train.ts |>
     #Just weekly seasonality since ESM does not support periods longer than 24 (i.e. year would be 365 since we have daily data)
     'HWAddWeek' = ETS(daily_total ~ error("A") + trend("A") + season("A", period="week")),
     'HWMultWeek' = ETS(daily_total ~ error("M") + trend("A") + season("M", period="week")),
-    'NoTrendWeek' = ETS(daily_total ~ error("A") + trend("N") + season("A", period="week"))
+    'NoTrendWeek' = ETS(daily_total ~ error("A") + trend("N") + season("A", period="week")),
   )
 ```
 
@@ -150,31 +154,237 @@ ggplot() + geom_line(data = ESM_fc, aes(x=date, y=.mean, color = "Forecast")) +
   labs(x="Month", y="Megawatts", title="Total Daily Energy Consumption", color = "Series") + 
   scale_color_manual (values=c("Actual"="black","Forecast" = "orange" ))
 ```
-## ARIMA
 
-### Seasonal ARIMA
+## Seasonal ARIMA
+
+Recall that yearly seasonality was the strongest, but weekly seasonality is still present. With multiple seasonalities and yearly being extremely complex, fitting Fourier terms is the most realistic option.
 
 ```{r}
+train.ts %>%
+  features(daily_total, feat_stl, .period = 'week')
 
+train.ts %>%
+  features(daily_total, feat_stl, .period = 'year')
+```
+
+### Approaches
+
+#### Deterministic
+
+##### Dummy Variables
+
+```{r}
+# weekly seasonality only realistic one to do
+sd_arima <- train.ts %>%
+  mutate(day_of_week = wday(date)) %>%
+  model(ARIMA(daily_total ~ factor(day_of_week) + PDQ(D = 0) + pdq(d = 0)))
+report(sd_arima)
+```
+
+```{r}
+sd_arima <- train.ts %>%
+  mutate(day_of_year = yday(date)) %>%
+  model(ARIMA(daily_total ~ factor(day_of_year) + PDQ(D = 0) + pdq(d = 0)))
+report(sd_arima)
+```
+
+
+#### Fourier
+
+Let's try to do a grid search for both weekly and yearly seasonality. Note here that we use $P=Q=D=d=0$ because we want to try to capture non-stationarity through the seasonal components only.
+
+```{r}
+grid_fourier = function(train,
+                        K_year_min = 1,
+                        K_year_max = 12, 
+                        K_week_min = 1,
+                        K_week_max = 3) {
+  fourier_master = list()
+  for (K_year in c(K_year_min:K_year_max)) {
+    for (K_week in c(K_week_min:K_week_max)) {
+      iter_name = paste0("K_year=", K_year, ", K_week=", K_week, sep='')
+      # create the model object for this iteration
+      arima = (
+        # !! ensures that we fill in the current values of K_week and K_year
+        # without it, these model definitions all get evaluated at the end of
+        #   iteration and just use the largest values
+        ARIMA(daily_total ~ fourier(K=!!K_week, period = 'week') + 
+                            fourier(K=!!K_year, period = 'year') + 
+                            PDQ(0, 0, 0) + 
+                            pdq(0, 0, 0))
+      )
+      
+      # insert the model into the list of models
+      fourier_master[[iter_name]] = arima
+    }
+  }
+
+  progressr::with_progress({
+    out = train %>%
+      model(!!!fourier_master)
+  })
+  
+  return (out)
+}
+
+# set K_year_max to determine the upper limit for the yearly search
+grid_fourier_results = grid_fourier(train.ts, K_year_max = 25, K_week_min = 3)
+grid_fourier_results %>%
+  glance() %>%
+  arrange(BIC) %>%
+  filter(str_detect(.model, 'K_week=3'))
+```
+
+While $K_week=2$ models give improved BIC, it turns out that they are not adequately capturing weekly seasonality. We will thus choose to use the best $K_week=3$ model.
+
+```{r}
+K_year = 11
+K_week = 3
+```
+
+Let's check if we have trending residuals by checking for trend stationarity in the residuals of `fourier_final`, which are essentially the seasonally adjusted data.
+
+```{r}
+fourier_final = train.ts %>%
+  model(
+    ARIMA(daily_total ~ fourier(K=K_week, period = 'week') + 
+                        fourier(K=K_year, period = 'year') + 
+                        PDQ(0, 0, 0) + pdq(0, 0, 0))
+  )
+
+# here, test for stationarity around a deterministic trend
+# if failing to reject H_0, data is stationary, so conclude a deterministic trend
+# if rejecting H_0, data is non-stationary, so conclude a stochastic trend
+fourier_final %>%
+  resid() %>%
+  fabletools::features(.resid, unitroot_kpss, .null = 'Trend')
+
+fourier_final %>%
+  resid() %>%
+  fabletools::features(.resid, unitroot_ndiffs)
+```
+
+The KPSS test rejected the null hypothesis at a significance level of 0.05, so we choose to model with stochastic trend.
+
+```{r}
+search_arima = train.ts %>%
+  model(
+    ARIMA(daily_total ~ fourier(K=K_week, period = 'week') + 
+                        fourier(K=K_year, period = 'year') +
+                        PDQ(0, 0, 0) + 
+                        pdq(d=1) +
+                        0
+    )
+  )
+
+report(search_arima)
+glance(search_arima)
+
+search_arima %>%
+  resid() %>%
+  ggAcf()
+
+search_arima %>%
+  resid() %>%
+  ggPacf()
+```
+
+```{r}
+manual_arima = train.ts %>%
+  model(
+    ARIMA(daily_total ~ fourier(K=K_week, period = 'week') + 
+                        fourier(K=K_year, period = 'year') +
+                        PDQ(0, 0, 0) + 
+                        pdq(1, 1, 3) +
+                        0
+    )
+  )
+
+report(manual_arima)
+glance(manual_arima)
+
+manual_arima %>%
+  resid() %>%
+  ggAcf()
+
+manual_arima %>%
+  resid() %>%
+  ggPacf()
+```
+
+
+Let's double-check that we have white noise.
+
+```{r}
+# final model choice for evaluation
+final_arima = manual_arima
+
+# this should be min(2 * longest seasonality, n / 5), according to Hyndman
+lag = 2 * 365.25
+
+arima_dof = function(model) {
+  mod = model[[1]][[1]]
+  p = mod$fit$spec[[1]]
+  q = mod$fit$spec[[3]]
+  return(p+q)
+}
+dof = arima_dof(final_arima)
+
+# Ljung-Box test failed to reject H_0, so we conclude no significant autocorrelation
+augment(final_arima) %>%
+  features(.innov, ljung_box, lag=lag, dof=dof)
+
+# Homoscedasticity: residuals do not appear to vary over time
+# Autocorrelation: the ACF plot shows just one slight spike for lags > 4, so 
+#                  I feel comfortable concluding no significant autocorrelation
+# Normality: the distribution appears roughly symmetric
+final_arima %>%
+  ggtime::gg_tsresiduals()
+
+# Normality: the tails are somewhat heavy but the residuals are mostly normal
+final_arima %>%
+  augment() %>%
+  ggplot(aes(sample = .resid)) +
+    stat_qq() +
+    stat_qq_line() +
+    labs(title = "Q-Q Plot")
 ```
 
 
 ### Forecast on Validation
 
 ```{r}
+arima_fc <- final_arima %>%
+  fabletools::forecast(h = nrow(validation.ts))
 
+ggplot() + 
+  geom_line(data = arima_fc , aes(x=date, y=.mean, color = "Forecast")) + 
+  geom_line(data = validation.ts, aes(x=date, y=daily_total, color = "Actual")) +
+  labs(x="Date", y="Megawatts", title="Total Daily Energy Consumption", color = "Series") + 
+  scale_color_manual (values=c("Actual"="black","Forecast" = "orange" ))
 ```
 
 
 ### Model Accuracy
 
 ```{r}
+# get SD for MAE report
+energy_daily %>% pull(daily_total) %>% sd()
 
+fabletools::accuracy(arima_fc, validation.ts) %>%
+  select(c(MAE, MAPE))
 ```
 
+* ARIMA(0, 1, 4) + (K_year = 6, K_week = 3)
+  * MAE: 7299.94 (SD = 15300.61)
+  * MAPE: 6.77%
+* ARIMA(1, 1, 3) + (K_year = 6, K_week = 3)
+  * MAE: 7247.61 (SD = 15300.61)
+  * MAPE: 6.72%
+* ARIMA(0, 1, 4) + (K_year = 11, K_week = 3)
+  * MAE: 7169.08 (SD = 15300.61)
+  * MAPE: 6.66%
+* ARIMA(1, 1, 3) + (K_year = 11, K_week = 3)
+  * MAE: 7147.81 (SD = 15300.61)
+  * MAPE: 6.64%
 
-### Actual vs. Forecasted
-
-```{r}
-
-```
