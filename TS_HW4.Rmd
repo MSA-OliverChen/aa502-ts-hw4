@@ -182,10 +182,11 @@ report(sd_arima)
 ```
 
 ```{r}
-sd_arima <- train.ts %>%
-  mutate(day_of_year = yday(date)) %>%
-  model(ARIMA(daily_total ~ factor(day_of_year) + PDQ(D = 0) + pdq(d = 0)))
-report(sd_arima)
+# don't run this lol
+# sd_arima <- train.ts %>%
+#   mutate(day_of_year = yday(date)) %>%
+#   model(ARIMA(daily_total ~ factor(day_of_year) + PDQ(D = 0) + pdq(d = 0)))
+# report(sd_arima)
 ```
 
 
@@ -199,6 +200,12 @@ grid_fourier = function(train,
                         K_year_max = 12, 
                         K_week_min = 1,
                         K_week_max = 3) {
+  # ensure Ks are within bounds
+  K_year_min = max(1, K_year_min)
+  K_week_min = max(1, K_week_min)
+  K_year_max = min(182, K_year_max)
+  K_week_max = min(3, K_week_max) 
+  
   fourier_master = list()
   for (K_year in c(K_year_min:K_year_max)) {
     for (K_week in c(K_week_min:K_week_max)) {
@@ -257,7 +264,7 @@ fourier_final = train.ts %>%
 # if rejecting H_0, data is non-stationary, so conclude a stochastic trend
 fourier_final %>%
   resid() %>%
-  fabletools::features(.resid, unitroot_kpss, .null = 'Trend')
+  fabletools::features(.resid, unitroot_kpss, .null = 'trend')
 
 fourier_final %>%
   resid() %>%
@@ -272,8 +279,7 @@ search_arima = train.ts %>%
     ARIMA(daily_total ~ fourier(K=K_week, period = 'week') + 
                         fourier(K=K_year, period = 'year') +
                         PDQ(0, 0, 0) + 
-                        pdq(d=1) +
-                        0
+                        pdq(d=1)
     )
   )
 
@@ -317,10 +323,12 @@ Let's double-check that we have white noise.
 
 ```{r}
 # final model choice for evaluation
-final_arima = manual_arima
+final_arima = search_arima
 
 # this should be min(2 * longest seasonality, n / 5), according to Hyndman
-lag = 2 * 365.25
+# lag = 2 * 365.25
+# also trying 3 * shortest seasonality
+lag = 3 * 7
 
 arima_dof = function(model) {
   mod = model[[1]][[1]]
@@ -369,22 +377,22 @@ ggplot() +
 
 ```{r}
 # get SD for MAE report
-energy_daily %>% pull(daily_total) %>% sd()
+energy_daily %>% pull(daily_total) %>% mean()
 
 fabletools::accuracy(arima_fc, validation.ts) %>%
   select(c(MAE, MAPE))
 ```
 
 * ARIMA(0, 1, 4) + (K_year = 6, K_week = 3)
-  * MAE: 7299.94 (SD = 15300.61)
+  * MAE: 7299.94 (mean = 105087.8)
   * MAPE: 6.77%
 * ARIMA(1, 1, 3) + (K_year = 6, K_week = 3)
-  * MAE: 7247.61 (SD = 15300.61)
+  * MAE: 7247.61 (mean = 105087.8)
   * MAPE: 6.72%
 * ARIMA(0, 1, 4) + (K_year = 11, K_week = 3)
-  * MAE: 7169.08 (SD = 15300.61)
+  * MAE: 7169.08 (mean = 105087.8)
   * MAPE: 6.66%
 * ARIMA(1, 1, 3) + (K_year = 11, K_week = 3)
-  * MAE: 7147.81 (SD = 15300.61)
+  * MAE: 7147.81 (mean = 105087.8)
   * MAPE: 6.64%
 
